@@ -90,13 +90,18 @@ def _adjust_scheme_to_bounds(x0, h, num_steps, scheme, lb, ub):
 
 
 def _compute_absolute_step(rel_step, x0, method):
+    if method == 'cs':
+        if rel_step is None:
+            rel_step = EPS**0.5
+        return rel_step * np.ones_like(x0)
+
     if rel_step is None:
         if method == '2-point':
             rel_step = EPS**0.5
         elif method == '3-point':
             rel_step = EPS**(1 / 3)
         else:
-            raise ValueError("`method` must be '2-point' or '3-point'.")
+            raise ValueError("`method` must be '2-point', '3-point' or 'cs'.")
 
     sign_x0 = (x0 >= 0).astype(float) * 2 - 1
     return rel_step * sign_x0 * np.maximum(1.0, np.abs(x0))
@@ -189,17 +194,28 @@ def approx_derivative(fun, x0, method='3-point', rel_step=None, f0=None,
         to a 1-d array.
     method : {'3-point', '2-point'}, optional
         Finite difference method to use:
-            - '2-point' - use the fist order accuracy forward or backward
-                          difference.
-            - '3-point' - use central difference in interior points and the
-                          second order accuracy forward or backward difference
-                          near the boundary.
+            * '2-point' : use the fist order accuracy forward or backward
+              difference. The expected relative accuracy of the result is
+              EPS**(1/2).
+            * '3-point' : use central difference in interior points and the
+              second order accuracy forward or backward difference near the
+              boundary. The expected relative accuracy of the result is
+              EPS**(2/3).
+            * 'cs' - use a complex-step finite difference scheme. This assumes
+              that a user's function is initially real-valued, correctly
+              works with complex inputs and can be analytically continued to
+              the complex plane. If these conditions hold, the result is
+              expected to have a full EPS relative accuracy, otherwise the
+              call will break or the result will be meaningless.
+        Above EPS is machine epsilon for float64 numbers.
     rel_step : None or array_like, optional
-        Relative step size to use. The absolute step size is computed as
+        Relative step size to use. For methods '2-point' and '3-point' the
+        absolute step size is computed as
         ``h = rel_step * sign(x0) * max(1, abs(x0))``, possibly adjusted to
         fit into the bounds. For ``method='3-point'`` the sign of `h` is
-        ignored. If None (default) then step is selected automatically,
-        see Notes.
+        ignored. For method 'cs' the actual step is complex and computed as
+        ``h = rel_step * 1j`` If None (default) then step is selected
+        automatically, see Notes.
     f0 : None or array_like, optional
         If not None it is assumed to be equal to ``fun(x0)``, in  this case
         the ``fun(x0)`` is not called. Default is None.
@@ -213,17 +229,15 @@ def approx_derivative(fun, x0, method='3-point', rel_step=None, f0=None,
         range of function evaluation.
     sparsity : None or (structure, groups) tuple, optional
         Defines sparsity structure of Jacobian.
-
-        * structure : array_like or sparse matrix of shape (m, n). A zero
-          element means that a corresponding element of Jacobian identically
-          equals to zero.
-        * groups : array_like of shape (n,). Precomputed columns grouping
-          for a given sparsity structure, function `group_columns` should be
-          used beforehand to compute it.
-
+            * structure : array_like or sparse matrix of shape (m, n). A zero
+              element means that a corresponding element of Jacobian
+              identically equals zero.
+            * groups : array_like of shape (n,). Precomputed columns grouping
+              for a given sparsity structure, function `group_columns` should
+              be used beforehand to compute it.
         Note, that sparse differencing makes sense only for actually large
-        and sparse Jacobians. If None (default) standard dense differencing
-        will be used.
+        and sparse Jacobians where *each* row contains few non-zero elements.
+        If None (default) standard dense differencing will be used.
 
     Returns
     -------
@@ -240,10 +254,10 @@ def approx_derivative(fun, x0, method='3-point', rel_step=None, f0=None,
 
     Notes
     -----
-    If `rel_step` is not provided, it assigned to ``EPS**(1/s)``, where EPS is
-    machine epsilon for float64 numbers, s=2 for '2-point' method and s=3 for
-    '3-point' method. Such relative step approximately minimizes a sum of
-    truncation and round-off errors, see [1]_.
+    If `rel_step` is not provided, it is assigned to EPS**0.5 for '2-point'
+    and 'cs' methods and to EPS**(1/3) for '3-point' method, where EPS is
+    machine epsilon for float64 numbers. Such relative step approximately
+    minimizes the sum of truncation and round-off errors, see [1]_.
 
     A finite difference scheme for '3-point' method is selected automatically.
     The well-known central difference scheme is used for points sufficiently
@@ -293,8 +307,8 @@ def approx_derivative(fun, x0, method='3-point', rel_step=None, f0=None,
     >>> approx_derivative(g, x0, bounds=(1.0, np.inf))
     array([ 2.])
     """
-    if method not in ['2-point', '3-point']:
-        raise ValueError("`method` must be '2-point' or '3-point'.")
+    if method not in ['2-point', '3-point', 'cs']:
+        raise ValueError("`method` must be '2-point', '3-point' or 'cs'.")
 
     x0 = np.atleast_1d(x0)
     if x0.ndim > 1:
@@ -330,6 +344,8 @@ def approx_derivative(fun, x0, method='3-point', rel_step=None, f0=None,
     elif method == '3-point':
         h, use_one_sided = _adjust_scheme_to_bounds(
             x0, h, 1, '2-sided', lb, ub)
+    elif method == 'cs':
+        use_one_sided = None
 
     if sparsity is None:
         return _dense_difference(fun_wrapped, x0, f0, h, use_one_sided, method)
@@ -369,6 +385,11 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
             f1 = fun(x1)
             f2 = fun(x2)
             df = f2 - f1
+        elif method == 'cs':
+            df = fun(x0 + h_vecs[i]*1.j).imag
+            dx = h_vecs[i, i]
+        else:
+            raise RuntimeError("Shouldn't be here.")
         J_transposed[i] = df / dx
 
     if m == 1:
@@ -424,6 +445,14 @@ def _sparse_difference(fun, x0, f0, h, use_one_sided,
 
             rows = i[~mask]
             df[rows] = f2[rows] - f1[rows]
+        elif method == 'cs':
+            df = fun(x0 + h_vec*1.j).imag
+            dx = h_vec
+            cols, = np.where(e)
+            i, j, v = find(structure[:, cols])
+            j = cols[j]
+        else:
+            raise ValueError("Shouldn't be here.")
 
         J[i, j] = df[i] / dx[j]
 
@@ -464,15 +493,13 @@ def check_derivative(fun, jac, x0, args=(), kwargs={},
     sparsity : None or (structure, groups) tuple, optional
         If `jac` returns a sparse matrix and ``sparse_diff=True``, provide a
         tuple with following elements:
-
-        * structure : array_like or sparse matrix of shape (m, n). A zero
-          element means that a corresponding element of Jacobian identically
-          equals to zero.
-        * groups : array_like of shape (n,). Precomputed columns grouping
-          for a given sparsity structure, function `group_columns` should be
-          used beforehand to compute it.
-
-        If None `structure` will be taken from evaluated `jac` and `groups`
+            * structure : array_like or sparse matrix of shape (m, n). A zero
+              element means that a corresponding element of Jacobian
+              identically equals zero.
+            * groups : array_like of shape (n,). Precomputed columns grouping
+              for a given sparsity structure, function `group_columns` should
+              be used beforehand to compute it.
+        If None, `structure` will be taken from evaluated `jac` and `groups`
         will be computed.
 
     Returns

@@ -186,36 +186,48 @@ class TestApproxDerivativesDense(object):
         jac_diff_2 = approx_derivative(self.fun_scalar_scalar, x0,
                                        method='2-point')
         jac_diff_3 = approx_derivative(self.fun_scalar_scalar, x0)
+        jac_diff_cs = approx_derivative(self.fun_scalar_scalar, x0,
+                                        method='cs')
         jac_true = self.jac_scalar_scalar(x0)
         assert_allclose(jac_diff_2, jac_true, rtol=1e-6)
         assert_allclose(jac_diff_3, jac_true, rtol=1e-9)
+        assert_allclose(jac_diff_cs, jac_true, rtol=1e-12)
 
     def test_scalar_vector(self):
         x0 = 0.5
         jac_diff_2 = approx_derivative(self.fun_scalar_vector, x0,
                                        method='2-point')
         jac_diff_3 = approx_derivative(self.fun_scalar_vector, x0)
+        jac_diff_cs = approx_derivative(self.fun_scalar_vector, x0,
+                                        method='cs')
         jac_true = self.jac_scalar_vector(np.atleast_1d(x0))
         assert_allclose(jac_diff_2, jac_true, rtol=1e-6)
         assert_allclose(jac_diff_3, jac_true, rtol=1e-9)
+        assert_allclose(jac_diff_cs, jac_true, rtol=1e-12)
 
     def test_vector_scalar(self):
         x0 = np.array([100.0, -0.5])
         jac_diff_2 = approx_derivative(self.fun_vector_scalar, x0,
                                        method='2-point')
         jac_diff_3 = approx_derivative(self.fun_vector_scalar, x0)
+        jac_diff_cs = approx_derivative(self.fun_vector_scalar, x0,
+                                        method='cs')
         jac_true = self.jac_vector_scalar(x0)
         assert_allclose(jac_diff_2, jac_true, rtol=1e-6)
         assert_allclose(jac_diff_3, jac_true, rtol=1e-7)
+        assert_allclose(jac_diff_cs, jac_true, rtol=1e-12)
 
     def test_vector_vector(self):
         x0 = np.array([-100.0, 0.2])
         jac_diff_2 = approx_derivative(self.fun_vector_vector, x0,
                                        method='2-point')
         jac_diff_3 = approx_derivative(self.fun_vector_vector, x0)
+        jac_diff_cs = approx_derivative(self.fun_vector_vector, x0,
+                                        method='cs')
         jac_true = self.jac_vector_vector(x0)
         assert_allclose(jac_diff_2, jac_true, rtol=1e-5)
         assert_allclose(jac_diff_3, jac_true, rtol=1e-6)
+        assert_allclose(jac_diff_cs, jac_true, rtol=1e-12)
 
     def test_wrong_dimensions(self):
         x0 = 1.0
@@ -341,6 +353,10 @@ class TestApproxDerivativesDense(object):
         assert_allclose(jac_diff_2, jac_true, rtol=1e-6)
         assert_allclose(jac_diff_3, jac_true, rtol=1e-8)
 
+        # math.exp cannot handle complex arguments, hence this raises
+        assert_raises(TypeError, approx_derivative, self.jac_non_numpy, x0,
+                                       **dict(method='cs'))
+
     def test_check_derivative(self):
         x0 = np.array([-10.0, 10])
         accuracy = check_derivative(self.fun_vector_vector,
@@ -409,7 +425,7 @@ class TestApproxDerivativeSparse(object):
         groups_2 = group_columns(A, order)
 
         for method, groups, l, u in product(
-                ['2-point', '3-point'], [groups_1, groups_2],
+                ['2-point', '3-point', 'cs'], [groups_1, groups_2],
                 [-np.inf, self.lb], [np.inf, self.ub]):
             J = approx_derivative(self.fun, self.x0, method=method,
                                   bounds=(l, u), sparsity=(A, groups))
@@ -425,7 +441,7 @@ class TestApproxDerivativeSparse(object):
     def test_equivalence(self):
         structure = np.ones((self.n, self.n), dtype=int)
         groups = np.arange(self.n)
-        for method in ['2-point', '3-point']:
+        for method in ['2-point', '3-point', 'cs']:
             J_dense = approx_derivative(self.fun, self.x0, method=method)
             J_sparse = approx_derivative(
                 self.fun, self.x0, sparsity=(structure, groups), method=method)
@@ -452,7 +468,7 @@ class TestApproxDerivativeSparse(object):
             self.fun, jac, self.x0,
             bounds=(self.lb, self.ub), sparse_diff=False)
         # Slightly worse accuracy because all elements are computed.
-        # Floating point issues make true 0 to some smal value, then
+        # Floating point issues make true 0 to some small value, then
         # it is divided by small step and as a result we have ~1e-9 element,
         # which is actually should be zero.
         assert_(accuracy < 1e-8)
