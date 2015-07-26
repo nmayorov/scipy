@@ -640,6 +640,9 @@ def least_squares(
             else:
                 tr_solver = 'lsmr'
 
+    if tr_solver == 'exact' and tr_options:
+        raise TypeError('Unknown tr_options = %s.' % tr_options)
+
     if method == 'lm':
         result = call_minpack(fun_wrapped, x0, jac_wrapped, ftol, xtol, gtol,
                               max_nfev, scaling, diff_step)
